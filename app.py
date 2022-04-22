@@ -1,105 +1,91 @@
-# twitter-oauth2-client
-
-from flask import redirect, request, render_template, session, abort, Flask
 import hashlib
+import sys
+import json
+import requests
+from tools import (decode_token, generate_random_string,
+                   print_json, base64_urlencode)
+from config import Config
+from client import Client
 from urllib.parse import urlencode
-from lib import tools
+from flask import redirect, request, render_template, session, abort, Flask
 
 
 app = Flask(__name__)
-app.secret_key = '!secret'
 
 
-confidentialClient = {
-    'client_id': config["client_id"],
-    'client_secret': config["client_secret"],
-}
+class UserSession:
+    def __init__(self):
+        pass
 
-publicClient = {
-    'client_id': config["client_id"],
-    'token_endpoint_auth_method': 'none',
-}
+    access_token = None
+    refresh_token = None
+    id_token = None
+    access_token_json = None
+    id_token_json = None
+    name = None
+    api_response = None
+    front_end_id_token = None
+    front_end_id_token_json = None
+    front_end_access_token = None
 
-client = publicClient if config['client_type'] == 'PUBLIC' else confidentialClient
+
+@app.route('/who')
+def check():
+    url = 'https://api.twitter.com/2/users/me'
+    auth_token = request.args.get('auth_token')
+    headers = {
+        "Authorization": 'Bearer {}'.format(auth_token)
+    }
+    r = requests.get(url, headers=headers)
+    return r.json()
 
 
 @app.route('/')
-def index():
-    """
-    :return: the index page with the tokens, if set.
-    """
-    user = None
-    if 'session_id' in session:
-        user = _session_store.get(session['session_id'])
+def start_oauth_flow():
 
-    if 'base_url' not in config or not config['base_url']:
-        config['base_url'] = request.base_url
+    state = generate_random_string()
+    code_verifier = generate_random_string(100)
+    code_challenge = base64_urlencode(
+        hashlib.sha256(code_verifier).digest())
 
-    if 'redirect_uri' not in config:
-        config['redirect_uri'] = config['base_url'].rstrip('/') + '/callback'
+    session['state'] = state
+    session['code_verifier'] = code_verifier
+    print("init session:")
+    print(session)
+    request_args = {
+        "client_id": config['client_id'],
+        "redirect_uri": config['redirect_uri'],
+        "response_type": 'code',
+        "scope": config['scope'],
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": 'S256',
+    }
 
-    if isinstance(user, (bytes, str)):
-        # User is a string! Probably a bunch of HTML from a previous error. Just bail and hope for the best.
-        return user
+    delimiter = "?" if config['authorization_endpoint'].find("?") < 0 else "&"
+    login_url = "{}{}{}".format(
+        config['authorization_endpoint'], delimiter, urlencode(request_args))
 
-    if user:
-        if user.front_end_id_token:
-            user.front_end_id_token_json = decode_token(
-                user.front_end_id_token)
+    print("Redirect to %s" % login_url)
 
-        if user.front_end_access_token:
-            user.front_end_access_token_json = decode_token(
-                user.front_end_access_token)
-
-        if user.id_token:
-            user.id_token_json = decode_token(user.id_token)
-
-        if user.access_token:
-            user.access_token_json = decode_token(user.access_token)
-
-        return render_template('index.html',
-                               server_name=config['issuer'],
-                               session=user, flow=session.get("flow", "code"))
-    else:
-        client_data = client.get_client_data()
-        dynamically_registered = bool(
-            client_data and 'client_id' in client_data)
-        using_static_registration = "client_id" in config and "client_secret" in config
-        registered = dynamically_registered or using_static_registration
-        client_id = client_data['client_id'] if dynamically_registered else config.get(
-            "client_id", "")
-
-        return render_template('welcome.html',
-                               registered=registered,
-                               client_id=client_id,
-                               server_name=config['issuer'],
-                               client_data=client_data,
-                               flow="code",
-                               using_dynamic_registration=dynamically_registered,
-                               authorization_endpoint=config["authorization_endpoint"])
+    return redirect(login_url)
 
 
 @app.route('/callback')
 def oauth_callback():
-    if session.get("flow", None) != "code":
-        # This is the callback for a hybrid or implicit flow
-        return render_template('index.html')
+    print("in callback session:")
+    print(request.args)
 
     if 'state' not in session or session['state'].decode() != request.args['state']:
         return create_error('Missing or invalid state')
-
     if "code_verifier" not in session:
         return create_error("No code_verifier in session")
-
     if 'code' not in request.args:
         return create_error('No code in response')
-
-    user = callback(request.args)
-
-    session['session_id'] = tools.generate_random_string()
-    _session_store[session['session_id']] = user
-
-    return redirect_with_baseurl('/')
+    
+    token_data = callback(request.args)
+    session['token_data'] = token_data
+    return token_data
 
 
 def redirect_with_baseurl(path):
@@ -115,13 +101,13 @@ def create_error(message, exception=None):
     """
     print('Caught error!')
     print(message, exception)
-    if _app:
+    if app:
         user = UserSession()
         if 'session_id' in session:
             user = _session_store.get(session['session_id'])
         return render_template('index.html',
                                flow="code",
-                               server_name=_config['issuer'],
+                               server_name=config['issuer'],
                                session=user,
                                error=message)
 
@@ -130,46 +116,60 @@ def callback(params):
     session.pop('state', None)
 
     try:
-        token_data = _client.get_token(
+        token_data = client.get_token(
             params['code'], session["code_verifier"].decode())
     except Exception as e:
         return create_error('Could not fetch token(s)', e)
 
-    # Store in basic server session, since flask session use cookie for storage
-    user = UserSession()
-
-    if 'access_token' in token_data:
-        user.access_token = token_data['access_token']
-
-    if 'refresh_token' in token_data:
-        user.refresh_token = token_data['refresh_token']
-
-    return user
+    return token_data
 
 
-@app.route('/start-login')
-def start_oauth_flow():
+def load_config():
+    """
+    Load config from the file given by argument, or settings.json
+    :return:
+    """
+    if len(sys.argv) > 1:
+        print("Using an alternative config file: %s" % sys.argv[1])
+        filename = sys.argv[1]
+    else:
+        filename = 'settings.json'
+    config = Config(filename)
 
-    state = tools.generate_random_string()
-    code_verifier = tools.generate_random_string(100)
-    code_challenge = tools.base64_urlencode(
-        hashlib.sha256(code_verifier).digest())
+    return config.load_config()
 
-    request_args = {
-        "client_id": client['client_id'],
-        "redirect_uri": config['redirect_uri'],
-        "response_type": 'code',
-        "scope": config['scope'],
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": 'S256',
-        "aud": config['issuer']
-    }
 
-    delimiter = "?" if config['authorization_endpoint'].find("?") < 0 else "&"
-    login_url = "{}{}{}".format(
-        config['authorization_endpoint'], delimiter, urlencode(request_args))
+if __name__ == '__main__':
 
-    print("Redirect to %s" % login_url)
+    # load the config
+    config = load_config()
 
-    return redirect(login_url)
+    client = Client(config)
+
+    # create a session store
+    _session_store = {}
+
+    # initiate the app
+    app.secret_key = generate_random_string()
+
+    # some default values
+    if 'port' in config:
+        port = int(config['port'])
+    else:
+        port = 5443
+
+    _disable_https = 'disable_https' in config and config['disable_https']
+
+    if 'base_url' not in config:
+        config['base_url'] = 'https://localhost:%i' % port
+
+    debug = config['debug'] = 'debug' in config and config['debug']
+
+    if debug:
+        print('Running conf:')
+        print_json(config)
+
+    if _disable_https:
+        app.run('0.0.0.0', debug=debug, port=port)
+    else:
+        app.run('0.0.0.0', debug=debug, port=port, ssl_context='adhoc')
