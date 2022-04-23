@@ -1,10 +1,10 @@
 {
-"client_id": "ZUVBaFBNTU5rLWQ0QTVEZVdyNHA6MTpjaQ",
-"client_secret": "5iJM4iXajR5jBVP2DfsbstHKP4l8z-_bBuHoLsInKsvKeqcixQ",
-"redirect_uri": "http://127.0.0.1:3000/callback",
-"scope": "tweet.read users.read offline.access",
-"authorization_endpoint": "https://twitter.com/i/oauth2/authorize",
-"token_endpoint": "https://api.twitter.com/2/oauth2/token",
-"port": 3000,
-"disable_https": true
+    "client_id": "-",
+    "client_secret": "-",
+    "redirect_uri": "http://127.0.0.1:3000/callback",
+    "scope": "tweet.read users.read like.read offline.access follows.read",
+    "authorization_endpoint": "https://twitter.com/i/oauth2/authorize",
+    "token_endpoint": "https://api.twitter.com/2/oauth2/token",
+    "port": 3000,
+    "disable_https": true
 }
