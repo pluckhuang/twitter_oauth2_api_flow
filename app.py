@@ -8,7 +8,7 @@ from tools import (decode_token, generate_random_string,
                    print_json, base64_urlencode)
 from config import Config
 from client import Client
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from flask import redirect, request, render_template, session, abort, Flask
 from oauthlib.oauth2 import BackendApplicationClient
 from requests_oauthlib import OAuth2Session
@@ -68,7 +68,7 @@ def following():
     url = 'https://api.twitter.com/2/users/{0}/following?user.fields=username,url'.format(request.args.get('uid'))
     auth_token = request.args.get('auth_token')
     headers = {
-        "Authorization": 'Bearer {}'.format(auth_token),
+        "Authorization": 'Bearer {}'.format(quote(auth_token)),
     }
     print(url)
 
@@ -96,22 +96,25 @@ def check():
         "Authorization": 'Bearer {}'.format(auth_token)
     }
     r = requests.get(url, headers=headers)
-    return r.json()
+    import json
+    print(r.headers)
+    return "ok"
+
 
 
 @app.route('/get_bearer_token')
 def direct_token():
     url = 'https://api.twitter.com/oauth2/token'
-    # basic_token = base64.b64encode("{0}:{1}".format(config['client_id'], config['client_secret']))
-    print(config['client_id'], config['client_secret'])
+    print(config['consumer_key'], config['consumer_secret'])
 
-    client_id = config['client_id']
-    client_secret = config['client_secret']
+    client_id = config['consumer_key']
+    client_secret = config['consumer_secret']
 
-    data = {
-        "grant_type": "client_credentials"
-    }
+    # data = {
+    #     "grant_type": "client_credentials"
+    # }
     client = BackendApplicationClient(client_id=client_id)
+    client.grant_type = "client_credentials"
     oauth = OAuth2Session(client=client)
     token = oauth.fetch_token(
         token_url=url,
